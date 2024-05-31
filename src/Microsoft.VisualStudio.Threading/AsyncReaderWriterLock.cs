@@ -114,7 +114,7 @@ public partial class AsyncReaderWriterLock : IDisposable
     /// The source of the <see cref="Completion"/> task, which transitions to completed after
     /// the <see cref="Complete"/> method is called and all issued locks have been released.
     /// </summary>
-    private readonly TaskCompletionSource<object?> completionSource = new TaskCompletionSource<object?>();
+    private readonly TaskCompletionSource<object?> completionSource = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     /// <summary>
     /// The queue of callbacks to invoke when the currently held write lock is totally released.
@@ -838,9 +838,7 @@ public partial class AsyncReaderWriterLock : IDisposable
             this.issuedReadLocks.Count == 0 && this.issuedUpgradeableReadLocks.Count == 0 && this.issuedWriteLocks.Count == 0 &&
             this.waitingReaders.Count == 0 && this.waitingUpgradeableReaders.Count == 0 && this.waitingWriters.Count == 0)
         {
-            // We must use another task to asynchronously transition this so we don't inadvertently execute continuations inline
-            // while we're holding a lock.
-            Task.Run(delegate { this.completionSource.TrySetResult(null); });
+            this.completionSource.TrySetResult(null);
         }
     }
 
@@ -1068,6 +1066,7 @@ public partial class AsyncReaderWriterLock : IDisposable
     private bool TryIssueLock(Awaiter awaiter, bool previouslyQueued, bool skipPendingWriteLockCheck = false)
     {
         bool issued = false;
+        bool isOrdinaryNestedLock = false; // ordinary nested lock is a nested lock always granted immediately. We don't need write ETW event to reduce noise in traces.
 
         lock (this.syncObject)
         {
@@ -1110,10 +1109,12 @@ public partial class AsyncReaderWriterLock : IDisposable
                                 }
 
                                 issued = true;
+                                isOrdinaryNestedLock = true;
                             }
                             else if (hasRead || hasUpgradeableRead)
                             {
                                 issued = true;
+                                isOrdinaryNestedLock = true;
                             }
 
                             break;
@@ -1121,6 +1122,7 @@ public partial class AsyncReaderWriterLock : IDisposable
                             if (hasUpgradeableRead || hasWrite)
                             {
                                 issued = true;
+                                isOrdinaryNestedLock = true;
                             }
                             else if (hasRead)
                             {
@@ -1139,6 +1141,7 @@ public partial class AsyncReaderWriterLock : IDisposable
                             if (hasWrite)
                             {
                                 issued = true;
+                                isOrdinaryNestedLock = true;
                             }
                             else if (hasRead && !hasUpgradeableRead)
                             {
@@ -1172,7 +1175,10 @@ public partial class AsyncReaderWriterLock : IDisposable
 
         if (issued)
         {
-            this.etw.Issued(awaiter);
+            if (!isOrdinaryNestedLock)
+            {
+                this.etw.Issued(awaiter);
+            }
         }
         else
         {
@@ -2711,9 +2717,11 @@ public partial class AsyncReaderWriterLock : IDisposable
         {
             Requires.NotNull(d, nameof(d));
 
+            int? requestId = null;
             if (ThreadingEventSource.Instance.IsEnabled())
             {
-                ThreadingEventSource.Instance.PostExecutionStart(d.GetHashCode(), false);
+                requestId = JoinableTaskFactory.SingleExecuteProtector.GetNextRequestId();
+                ThreadingEventSource.Instance.PostExecutionStart(requestId.Value, false);
             }
 
             // Take special care to minimize allocations and overhead by avoiding implicit delegates and closures.
@@ -2721,12 +2729,12 @@ public partial class AsyncReaderWriterLock : IDisposable
             // nor any other local variables, which means the only allocations from this call
             // are our Tuple and the ThreadPool's bare-minimum necessary to track the work.
             ThreadPool.QueueUserWorkItem(
-                s =>
+                static s =>
                 {
-                    var tuple = (Tuple<NonConcurrentSynchronizationContext, SendOrPostCallback, object>)s!;
-                    tuple.Item1.PostHelper(tuple.Item2, tuple.Item3);
+                    var tuple = (Tuple<NonConcurrentSynchronizationContext, SendOrPostCallback, object, int?>)s!;
+                    tuple.Item1.PostHelper(tuple.Item2, tuple.Item3, tuple.Item4);
                 },
-                Tuple.Create(this, d, state));
+                Tuple.Create(this, d, state, requestId));
         }
 
         /// <inheritdoc/>
@@ -2763,7 +2771,7 @@ public partial class AsyncReaderWriterLock : IDisposable
         /// We use async void instead of async Task because the caller will never
         /// use the result, and this way the compiler doesn't have to create the Task object.
         /// </remarks>
-        private async void PostHelper(SendOrPostCallback d, object state)
+        private async void PostHelper(SendOrPostCallback d, object state, int? requestId)
         {
             bool delegateInvoked = false;
             try
@@ -2773,9 +2781,9 @@ public partial class AsyncReaderWriterLock : IDisposable
                 try
                 {
                     SynchronizationContext.SetSynchronizationContext(this);
-                    if (ThreadingEventSource.Instance.IsEnabled())
+                    if (ThreadingEventSource.Instance.IsEnabled() && requestId.HasValue)
                     {
-                        ThreadingEventSource.Instance.PostExecutionStop(d.GetHashCode());
+                        ThreadingEventSource.Instance.PostExecutionStop(requestId.Value);
                     }
 
                     delegateInvoked = true; // set now, before the delegate might throw.
