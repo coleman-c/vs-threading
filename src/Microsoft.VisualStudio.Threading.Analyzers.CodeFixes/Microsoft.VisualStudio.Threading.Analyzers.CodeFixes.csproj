@@ -9,7 +9,7 @@
     <PackageId>Microsoft.VisualStudio.Threading.Analyzers</PackageId>
     <PackageTags>analyzers visualstudio vssdk sdk threading</PackageTags>
     <PackageReleaseNotes>In the v16.0 release, analyzers require at least C# 7.3 (Visual Studio 2017 Update 7).</PackageReleaseNotes>
-
+    <PackageVersion>17.8.1-ensek</PackageVersion>
     <!-- Analyzers should not be added to the lib folder. -->
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>

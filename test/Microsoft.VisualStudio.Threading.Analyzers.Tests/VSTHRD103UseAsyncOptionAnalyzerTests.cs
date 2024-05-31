@@ -724,6 +724,184 @@ class Test {
     }
 
     [Fact]
+    public async Task GenericMethodNameWithImplicitArgsSyncInvocationWhereAsyncOptionWithExistsInSameTypeGeneratesWarning()
+    {
+        var test = @"
+using System.Threading.Tasks;
+
+class Test {
+    Task T() {
+        Foo(10, 15);
+        return Task.FromResult(1);
+    }
+
+    internal static void Foo<T>(T x, int y) { }
+    internal static Task FooAsync<T>(T x, int y) => null;
+}
+";
+
+        var withFix = @"
+using System.Threading.Tasks;
+
+class Test {
+    async Task T() {
+        await FooAsync(10, 15);
+    }
+
+    internal static void Foo<T>(T x, int y) { }
+    internal static Task FooAsync<T>(T x, int y) => null;
+}
+";
+
+        DiagnosticResult expected = CSVerify.Diagnostic(Descriptor).WithSpan(6, 9, 6, 12).WithArguments("Foo", "FooAsync");
+        await CSVerify.VerifyCodeFixAsync(test, expected, withFix);
+    }
+
+    [Fact]
+    public async Task GenericMethodNameWithImplicitArgsSyncInvocationWhereAsyncOptionOnAnotherTypeGeneratesWarning()
+    {
+        var test = @"
+using System.Threading.Tasks;
+
+interface IBar {
+    void Foo<T>(T x, int y);
+    Task FooAsync<T>(T x, int y);
+}
+
+class Test {
+    Task T(IBar bar) {
+        bar.Foo(10, 15);
+        return Task.FromResult(1);
+    }
+}
+";
+
+        var withFix = @"
+using System.Threading.Tasks;
+
+interface IBar {
+    void Foo<T>(T x, int y);
+    Task FooAsync<T>(T x, int y);
+}
+
+class Test {
+    async Task T(IBar bar) {
+        await bar.FooAsync(10, 15);
+    }
+}
+";
+
+        DiagnosticResult expected = CSVerify.Diagnostic(Descriptor).WithSpan(11, 13, 11, 16).WithArguments("Foo", "FooAsync");
+        await CSVerify.VerifyCodeFixAsync(test, expected, withFix);
+    }
+
+    [Fact]
+    public async Task GenericMethodNameWithExplicitArgSyncInvocationWhereAsyncOptionExistsInSameTypeGeneratesWarning()
+    {
+        var test = @"
+using System.Threading.Tasks;
+
+class Test {
+    Task T() {
+        Foo<int>(10, 15);
+        return Task.FromResult(1);
+    }
+
+    internal static void Foo<T>(T x, int y) { }
+    internal static Task FooAsync<T>(T x, int y) => null;
+}
+";
+
+        var withFix = @"
+using System.Threading.Tasks;
+
+class Test {
+    async Task T() {
+        await FooAsync<int>(10, 15);
+    }
+
+    internal static void Foo<T>(T x, int y) { }
+    internal static Task FooAsync<T>(T x, int y) => null;
+}
+";
+
+        DiagnosticResult expected = CSVerify.Diagnostic(Descriptor).WithSpan(6, 9, 6, 17).WithArguments("Foo<int>", "FooAsync<int>");
+        await CSVerify.VerifyCodeFixAsync(test, expected, withFix);
+    }
+
+    [Fact]
+    public async Task GenericMethodNameWithExplicitArgsSyncInvocationWhereAsyncOptionOnAnotherTypeGeneratesWarning()
+    {
+        var test = @"
+using System.Threading.Tasks;
+
+interface IBar {
+    void Foo<T>(T x, int y);
+    Task FooAsync<T>(T x, int y);
+}
+
+class Test {
+    Task T(IBar bar) {
+        bar.Foo<int>(10, 15);
+        return Task.FromResult(1);
+    }
+}
+";
+
+        var withFix = @"
+using System.Threading.Tasks;
+
+interface IBar {
+    void Foo<T>(T x, int y);
+    Task FooAsync<T>(T x, int y);
+}
+
+class Test {
+    async Task T(IBar bar) {
+        await bar.FooAsync<int>(10, 15);
+    }
+}
+";
+
+        DiagnosticResult expected = CSVerify.Diagnostic(Descriptor).WithSpan(11, 13, 11, 21).WithArguments("Foo<int>", "FooAsync<int>");
+        await CSVerify.VerifyCodeFixAsync(test, expected, withFix);
+    }
+
+//    [Fact]
+//    public async Task GenericArgsExplicitylSetMultipleSyncInvocationWhereAsyncOptionExistsInSameTypeGeneratesWarning()
+//    {
+//        var test = @"
+//using System.Threading.Tasks;
+
+//class Test {
+//    Task T() {
+//        Foo<int, long>(10, 15);
+//        return Task.FromResult(1);
+//    }
+
+//    internal static void Foo<T1,T2>(T1 x, T2 y) { }
+//    internal static Task FooAsync<T1,T2>(T1 x, T2 y) => null;
+//}
+//";
+
+//        var withFix = @"
+//using System.Threading.Tasks;
+
+//class Test {
+//    async Task T() {
+//        await FooAsync<int, long>(10, 15);
+//    }
+
+//    internal static void Foo<T1,T2>(T1 x, T2 y) { }
+//    internal static Task FooAsync<T1,T2>(T1 x, T2 y) => null;
+//}
+//";
+
+//        DiagnosticResult expected = CSVerify.Diagnostic(Descriptor).WithSpan(6, 9, 6, 23).WithArguments("Foo<int, long>", "FooAsync<int, long>");
+//        await CSVerify.VerifyCodeFixAsync(test, expected, withFix);
+//    }
+
+    [Fact]
     public async Task SyncInvocationWhereAsyncOptionIsObsolete_GeneratesNoWarning()
     {
         var test = @"
@@ -971,6 +1149,70 @@ static class FruitUtils {
     }
 
     [Fact]
+    public async Task SyncInvocationWhereAsyncOptionExistsInExtensionMethodFromNewNamespaceGeneratesWarning()
+    {
+        var test = @"
+using System.Threading.Tasks;
+using My.Sync;
+using My.Async;
+
+class Test {
+    Task T() {
+        IFruit<int> f = null;
+        f.Foo();
+        return Task.FromResult(1);
+    }
+}
+
+interface IFruit<T> {
+}
+
+namespace My.Sync {
+    static class SyncFruitUtils {
+        internal static void Foo<T>(this IFruit<T> f) { }
+    }
+}
+
+namespace My.Async {
+    static class AsyncFruitUtils {
+        internal static Task FooAsync<T>(this IFruit<T> f) => null;
+    }
+}
+";
+
+        var withFix = @"
+using System.Threading.Tasks;
+using My.Sync;
+using My.Async;
+
+class Test {
+    async Task T() {
+        IFruit<int> f = null;
+        await f.FooAsync();
+    }
+}
+
+interface IFruit<T> {
+}
+
+namespace My.Sync {
+    static class SyncFruitUtils {
+        internal static void Foo<T>(this IFruit<T> f) { }
+    }
+}
+
+namespace My.Async {
+    static class AsyncFruitUtils {
+        internal static Task FooAsync<T>(this IFruit<T> f) => null;
+    }
+}
+";
+
+        DiagnosticResult expected = CSVerify.Diagnostic(Descriptor).WithSpan(9, 11, 9, 14).WithArguments("Foo", "FooAsync");
+        await CSVerify.VerifyCodeFixAsync(test, expected, withFix);
+    }
+
+    [Fact]
     public async Task SyncInvocationUsingStaticGeneratesWarning()
     {
         var test = @"
@@ -1117,7 +1359,7 @@ static class FruitUtils {
 }
 ";
 
-        DiagnosticResult expected = CSVerify.Diagnostic(Descriptor).WithSpan(7, 9, 7, 17).WithArguments("Foo<int>", "FooAsync");
+        DiagnosticResult expected = CSVerify.Diagnostic(Descriptor).WithSpan(7, 9, 7, 17).WithArguments("Foo<int>", "FooAsync<int>");
         await CSVerify.VerifyCodeFixAsync(test, expected, withFix);
     }
 

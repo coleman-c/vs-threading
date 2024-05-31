@@ -104,9 +104,15 @@ public class VSTHRD103UseAsyncOptionAnalyzer : DiagnosticAnalyzer
                     !methodSymbol.HasAsyncCompatibleReturnType())
                 {
                     string asyncMethodName = methodSymbol.Name + VSTHRD200UseAsyncNamingConventionAnalyzer.MandatoryAsyncSuffix;
+                    string? asyncMethodNameWithGenricParams = null;
+                    if (methodSymbol.IsGenericMethod)
+                    {
+                        asyncMethodNameWithGenricParams = methodSymbol.Name + VSTHRD200UseAsyncNamingConventionAnalyzer.MandatoryAsyncSuffix + "<" + string.Join(", ", methodSymbol.TypeArguments) + ">";
+                    }
+
                     ImmutableArray<ISymbol> symbols = context.SemanticModel.LookupSymbols(
                         invocationExpressionSyntax.Expression.GetLocation().SourceSpan.Start,
-                        methodSymbol.ContainingType,
+                        methodSymbol.MethodKind == MethodKind.ReducedExtension ? methodSymbol.ReceiverType : methodSymbol.ContainingType,
                         asyncMethodName,
                         includeReducedExtensionMethods: true);
 
@@ -128,7 +134,7 @@ public class VSTHRD103UseAsyncOptionAnalyzer : DiagnosticAnalyzer
                                 invokedMethodName.GetLocation(),
                                 properties,
                                 invokedMethodName.ToString(),
-                                asyncMethodName);
+                                methodSymbol.IsGenericMethod && invokedMethodName.ToString().EndsWith(">") ? asyncMethodNameWithGenricParams : asyncMethodName);
                             context.ReportDiagnostic(diagnostic);
 
                             return;
@@ -148,7 +154,7 @@ public class VSTHRD103UseAsyncOptionAnalyzer : DiagnosticAnalyzer
         /// </returns>
         private static bool HasSupersetOfParameterTypes(IMethodSymbol candidateMethod, IMethodSymbol baselineMethod)
         {
-            return candidateMethod.Parameters.All(candidateParameter => baselineMethod.Parameters.Any(baselineParameter => baselineParameter.Type?.Equals(candidateParameter.Type, SymbolEqualityComparer.Default) ?? false));
+            return candidateMethod.Parameters.All(candidateParameter => baselineMethod.Parameters.Any(baselineParameter => baselineParameter.OriginalDefinition.Type?.Name.Equals(candidateParameter.Type.Name) ?? false));
         }
 
         private static bool IsInTaskReturningMethodOrDelegate(SyntaxNodeAnalysisContext context)
